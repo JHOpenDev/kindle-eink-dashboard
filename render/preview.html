@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<title>墨水屏看板 · 实时预览</title>
+<style>
+body{background:#222;color:#eee;font-family:-apple-system,sans-serif;text-align:center;margin:0;padding:20px}
+img{max-width:96vw;box-shadow:0 4px 24px rgba(0,0,0,.5);background:#fff}
+p{color:#888}span{color:#6cf}
+</style></head>
+<body>
+<h2>📱 墨水屏看板 · 实时预览</h2>
+<img id="shot" src="dash.png" alt="dashboard">
+<p>每 60 秒自动同步 · 设备每 5 分钟拉取 · 上次渲染 <span id="ts">--</span></p>
+<script>
+function reload(){ const i=document.getElementById('shot'); i.src='dash.png?t='+Date.now();
+  fetch('dash.png',{method:'HEAD'}).catch(()=>{});
+  document.getElementById('ts').textContent=new Date().toLocaleTimeString('zh-CN'); }
+setInterval(reload, 60000); setTimeout(reload, 500);
+</script>
+</body></html>

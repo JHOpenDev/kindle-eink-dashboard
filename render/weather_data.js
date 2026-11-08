@@ -1,0 +1,1 @@
+window.WEATHER = {"temp": -1, "desc": "晴", "humidity": 81, "wind": 0, "tmax": 9, "tmin": -1, "ddesc": "晴", "city": "北京"};
