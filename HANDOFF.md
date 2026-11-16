@@ -1,112 +1,93 @@
 # 工作交接 — Kindle PW3 墨水屏看板 + KOReader/微信读书
 
-> 会话日期：2026-11-09 ~ 11-11。本文件是**下一会话的工作交接**，配套
-> [SKILL.md](SKILL.md)（通用踩坑指南）阅读。设备序列号 G090KB03702608LE
-> （Kindle Paperwhite 3 / 7th gen / 白色 WiFi，固件 5.16.2.1.1，**切勿升级**）。
+> 更新：2026-11-11 晚。设备序列号 G090KB03702608LE（Kindle Paperwhite 3 / 7th gen /
+> 白色 WiFi，固件 5.16.2.1.1，**切勿升级**）。本文件与 [SKILL.md](SKILL.md)（通用踩坑
+> 指南，已含本次全部经验）配套阅读。
 
-## 当前状态总览
+## ✅ 当前状态：双模式全部可用（2026-11-11 全部验证）
 
-### ✅ 已完成并验证
-- **看板模式**：LanguageBreak 越狱 + hotfix + 直写 framebuffer 显示管线
-  （Mac 渲染 1072×1448 竖版 → 8bpp raw → `cat > /dev/fb0` → `fbink -f -s`），
-  满屏、方向正、无变形。**Mac 重启后需重新拉起服务**（见"待办"）。
-- **北京真实天气**：Open-Meteo API（无需密钥），`scripts/fetch_weather.py`。
-- **浏览器实时预览**：`http://192.168.1.210:8899/preview.html`（60s 自动同步）。
-- GitHub 已开源：本仓库。
+### 看板模式（默认开机）
+开机 bridge → emergency.sh → dashboard/dash.sh 循环：拉天气 → Mac 拉 dash.raw →
+写 fb → 刷新 → RTC 睡眠。**Mac 重启后需重新拉起服务**（LaunchAgent 仍未做）：
+```bash
+scripts/render_dashboard.sh --loop          # 渲染循环
+python3 -m http.server 8899 --bind 0.0.0.0  # HTTP 服务
+pkill -f "http.server 8899"; pkill -f render_dashboard.sh   # 端口冲突清理
+```
 
-### ⚠️ 当前设备状态（最后快照）
-- `emergency.sh` = 最新版（含 `start_koread` 分支 + nosleep 检测 + sync 修复）✅
-- `weread/run.sh` = cd 修复版 ✅（`cd /mnt/us/koreader` 已写入主循环前）
-- `weread.koplugin` v1.7.0 = 已部署到 `koreader/plugins/` ✅
-- 标志：`start_weread`/`dashboard_stop` 已清；`start_koread`/`nosleep` 在设备上
-  （最后快照时在线）——**下次插线先检查并按需清理**
-- `weread/crash.log` = 空（main.lua 从未执行——见"卡点"）
-- 设备屏幕：最后已知为"天气页残影"（e-ink 残留，实际状态未知）
+### 微信读书模式（start_koread 标志）
+Mac 在卷根 `touch start_koread` + sync + eject + **拔线** + 长按重启 → emergency.sh
+消费标志 → `weread/run.sh`（后台化）→ KOReader kindle 版底座 → 微信读书 App。
+**已登录**（session.json 持久化），界面已做 PW3 坐标适配，验证完美。
+工具：`scripts/kindle-flag.sh set start_koread`（卷挂载时）。
 
-## 🎯 卡点：KOReader 从未真正启动（下一步的第一件事）
+### 本次修复的四个死因（全部实锤，详见 SKILL.md 阶段四）
+1. **KOReader 本体从未上机**（extensions/koreader 只是 KUAL 壳）→ 拷入 kindle 版
+2. **装错构建**：kindlehf（PW5 专用）在 PW3 上 exec 失败，shell 误报 `./luajit: not
+   found` → 换 koreader-kindle v2026.07.1
+3. **rapidjson 需 GLIBCXX_3.4.29**，固件 libstdc++ 太老 → run.sh 里
+   `LD_LIBRARY_PATH=/mnt/us/koreader/libs`（包内自带 3.4.33）
+4. **界面按 1264×1680 设计**，PW3 右偏/出屏 → 9 文件 ~120 处坐标按屏比例缩放
+   （`render/weread-pw3/` + `scripts/patch_pw3_layout.py`）
 
-**现象**：`start_koread` 分支执行（标志被消费），但 KOReader 本体从未显示，
-`weread/crash.log` 始终为空（main.lua 从未执行）。
-
-**已定位的根因链**（修复已部署但**未经真重启验证**——这是关键）：
-1. `emergency.sh` 的 start_koread 分支原本调 `koreader/koreader.sh`（KOReader
-   官方脚本）→ 它的 334 行 `ko_update_check` 用 `./reader.lua` 相对路径，在
-   bridge 的 CWD（/）下崩 → `./reader.lua: not found`（crash.log 报过一次）。
-2. **修复**：分支已改为调 `weread/run.sh`（定制启动器，内含
-   `cd /mnt/us/koreader || exit 1` 修复 + luajit main.lua 入口）——**已部署**。
-3. ⚠️ **但用户端很可能从未做过一次"真重启"**：多次"重启"实为 mem 唤醒
-   （电源键短按），emergency.sh 从未在标志部署后真正执行。**验证方法**：
-   长按电源 15~30 秒硬重启，屏幕会**全黑→全白闪烁**（e-ink 完整刷新）。
-4. 附加教训：`start_weread` 轮触发过**整机重启死循环**——weread 启动分支里
-   `initctl stop framework` 在 PW3 上导致图形系统异常循环；且标志 rm 后未
-   `sync` 被 FAT 回滚复活。**两处均已在最新脚本修复**（weread 分支已删除，
-   改为 KOReader 直启；rm 后强制 sync）。
-
-### 下次继续的第一步
-1. 插线 → 检查 `start_koread`/`nosleep` 标志，清理为 `start_koread` 单标志
-2. **长按电源 15~30 秒硬重启**（确认 e-ink 全屏刷新 = 真重启）
-3. 等 1 分钟 → 插线读 `weread/crash.log`（这次必有内容）：
-   - main.lua 报错 → 按报错修（多为 weread-kindle 的 Oasis3 坐标硬编码，
-     见 `weread/weread/bookpreviewview.lua:22` 的 `W,H = 1264,1680`，需适配
-     PW3 的 1072×1448；比例接近 0.752 vs 0.740，适配可行性高）
-   - KOReader 界面出现 → 菜单 → 工具 → **微信读书**（weread.koplugin
-     v1.7.0 已装）→ 微信扫码登录 → 完成
-4. 若 KOReader 本体崩 → 读 `koreader/crash.log`；kindlehf 版若异常可换
-   `downloads/koreader-kindle-v2026.07.1.zip`（标准版，已在本地）重试
-
-## 关键机制（精要）
-
-- **bridge emergency.sh**：`mkk/bridge.sh` 每次开机（framework_ready）以 root
-  执行 `/mnt/us/emergency.sh`——一切开机逻辑的入口。修改它=修改开机行为。
-- **标志开关模式**：Mac 端在 USB 卷上 `touch/rm` 标志文件，emergency.sh 检测
-  分支。⚠️ **rm 后必须 sync**（否则 FAT 回滚，标志复活——曾导致重启死循环）。
-- **nosleep**：`/mnt/us/nosleep` 存在时设备浅睡不断 USB（大文件部署窗口）。
-- **fb 直写**：8bpp 灰度、stride 1088（1072 可见+16 padding）、1072×1448
-  竖向逻辑坐标。`eips -g` 会把图非等比拉伸到 1448×1448（勿用，已绕开）。
-- **scriptlet 不可用**：LanguageBreak 的 hotfix（KHF）不含 Universal Hotfix
-  的 SH_Integration——documents 里的 .sh 不会显示为书。KOL booklet 安装包
-  与 hotfix 版本接口不匹配（update error 2）——启动入口只能走 emergency.sh。
+### 关键机制备忘
+- **core 转储事故（2026-11-16）**：framework（KPPMainAppV2）崩溃时每个 core ~196MB，
+  15 个塞满 3GB 分区 → 全系统写失败（白屏/应用猝死/日志 0 字节）。emergency.sh 已加
+  `core_pattern → /dev/null` 内核防线；若再遇到满盘先查 `/mnt/us/*.core`。
+- **dash.sh 防挂死**：启动时先画磁盘上最后一张看板（白屏急救），initctl/lipc/电量计
+  全部带 timeout 降级（异常状态下这些调用可能永久阻塞）。
+- **自定义息屏图**：`/mnt/us/weread/sleep.png` 存在则优先于书籍封面快照
+  （app.lua hookScreensaver 已打补丁）。换图 = 替换该文件（1072×1448 PNG）。
+  息屏唤醒只认电源键（无滑动解锁手势）；偶尔需按两次是 KOReader 唤醒竞态。
+- **标志是一次性的**：emergency.sh 消费后 rm+sync（防重启死循环）。重试必须重设。
+- **重启前必须拔线**：插线重启时 USBMS 接管 /mnt/us，emergency.sh 设备侧"不存在"
+  （偶发但真实发生过）。
+- **调试四层日志**：boot_trace.log（设备视角）→ weread/boot.log（sh -x 轨迹+探针）→
+  crash.log（luajit 报错）。定位死点全靠它们，勿靠猜。
+- **bridge pre-start 同步执行**：emergency.sh 里的长任务必须后台化。
+- **App 运行中插 USB 无卷** = 设计使然（volumd 被 SIGSTOP），退出 App 即恢复。
+- `update.bin.tmp.partial/` 文件夹 = OTA 拦截，**删了会失守越狱**。
 
 ## 待办（按优先级）
 
-1. [ ] **真重启验证 start_koread → KOReader → 微信读书**（见上）
-2. [ ] weread 界面 PW3 坐标适配（若错位）：改 `weread/weread/*.lua` 的
-       硬编码坐标（集中在 bookpreviewview/readerview 等，比例系数约 0.848）
-3. [ ] **LaunchAgent**：Mac 重启后自动拉起渲染循环 + HTTP 服务
-       （`scripts/render_dashboard.sh --loop` + `http.server 8899`）
-4. [ ] 正式刷新节奏：设备 `dashboard/local/env.sh` 的 `REFRESH_SCHEDULE`
-       （现测试值 `*/5 * * * *`，建议改 `"0,30 8-22 * * *"`）
-5. [ ] weread 双模式切换打磨（start_weread/dashboard_stop 标志的 UI 化）
-6. [ ] KOReader 验证成功后：把 LanguageBreak+KHF 设备的 KOReader 启动方案
-       补进 SKILL.md（社区文档空白点）
+1. [ ] **LaunchAgent**：Mac 重启后自动拉起 `render_dashboard.sh --loop` + `http.server
+       8899`（看板模式目前依赖手动）
+2. [ ] 正式刷新节奏：`dashboard/local/env.sh` 的 `REFRESH_SCHEDULE`（现 `*/5` 测试值，
+       建议 `"0,30 8-22 * * *"`）
+3. [ ] 微信读书弹出面板（阅读页进度/字体/更多面板）内部仍是 1264 设计坐标——自洽可用
+       但整体略偏，按需补（readerview.lua 的 SLIDERS/FONT_GRID/MORE/INDENT 表 +
+       panelY 函数）
+4. [ ] weread 双模式切换打磨（start_weread/dashboard_stop 标志 UI 化）
+5. [ ] 稳定后可移除 emergency.sh 顶部的 boot_trace 段（省一次文件写入）
+6. [ ] 考虑把 render/weread-pw3 与 downloads/weread-kindle 上游做 git 管理便于升级
 
 ## 文件地图
 
 ```
 设备（/mnt/us，即 USB 卷根）：
-├── emergency.sh          # 开机入口（bridge 执行）——最新版在本仓库 render/
-├── koreader/             # KOReader 本体（kindlehf v2026.07.1）
-│   └── plugins/weread.koplugin/   # 微信读书插件 v1.7.0
-├── weread/               # 微信读书客户端（main.lua + run.sh + weread/）
-├── weread/crash.log      # main.lua 的崩溃日志（下次验证关键证据）
-├── dashboard/            # 看板（env.sh 刷新节奏、local/fetch 脚本）
-├── nosleep / start_koread / dashboard_stop   # 标志开关（按需清理）
-└── update.bin.tmp.partial/          # OTA 拦截（⚠️ 删了会失守越狱）
+├── emergency.sh          # v3：boot_trace 飞行记录仪 + 一次性标志分支（仓库 render/final_emergency.sh）
+├── boot_trace.log        # 每次开机的设备视角记录（调试用，可删）
+├── koreader/             # KOReader kindle 版 v2026.07.1 本体（1029 文件）
+│   ├── libs/libstdc++.so.6   # 自带新版（3.4.33），LD_LIBRARY_PATH 指向这里
+│   └── plugins/weread.koplugin/  # 微信读书 KOReader 插件 v1.7.0（备用，App 模式不用它）
+├── weread/               # 微信读书客户端
+│   ├── run.sh            # koreader.sh 派生 + cd 修复 + LD_LIBRARY_PATH + /var/tmp luajit + 探针
+│   ├── boot.log          # 启动轨迹（sh -x）
+│   ├── crash.log         # luajit 报错
+│   ├── session.json      # 登录态（勿删）
+│   └── weread/*.lua      # 界面（已刷成 PW3 适配版，源在仓库 render/weread-pw3/）
+├── dashboard/            # 看板（env.sh 调度、logs/dash.log）
+├── nosleep / start_koread  # 标志（nosleep=浅睡不断 USB；start_koread=一次性）
+└── update.bin.tmp.partial/  # OTA 拦截（⚠️ 删了会失守越狱）
 
 Mac（工具/kindle-eink-dashboard/）：
-├── render/               # dashboard.html、dash.png/raw、weread.koplugin
-├── scripts/              # png2raw、fetch_weather、render_dashboard、emergency.sh 模板
-├── downloads/            # 全部安装包（KOReader 两版、weread-kindle 源码、staging/）
-└── （老目录 工具/kindle-jailbreak/ 有 fb dump 分析等历史工件）
-```
-
-## 服务运维（Mac 侧）
-
-```bash
-# 渲染循环（每 5 分钟：拉天气 → 截图 → 转 raw）
-scripts/render_dashboard.sh --loop
-# HTTP 服务（设备从这里拉 raw）
-python3 -m http.server 8899 --directory render
-# 端口冲突时清理
-pkill -f "http.server 8899"; pkill -f render_dashboard.sh
+├── render/
+│   ├── final_emergency.sh    # 设备 emergency.sh 的部署源（v3）
+│   ├── weread-pw3/           # PW3 适配版界面 Lua（部署源）
+│   └── weread.koplugin/      # 插件 v1.7.0
+├── scripts/
+│   ├── patch_pw3_layout.py   # 坐标适配补丁（唯一性断言，可重放）
+│   ├── kindle-flag.sh        # 标志工具（自动 sync）
+│   └── emergency.sh          # 纯看板版模板（历史）
+└── downloads/                # 安装包（koreader-kindle ←用这个、weread-kindle 源码、staging）
 ```

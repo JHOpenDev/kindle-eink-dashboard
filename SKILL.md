@@ -1,6 +1,6 @@
 ---
 name: kindle-eink-dashboard
-description: 把旧款 Kindle（Paperwhite 3 / 7th gen 等）改造成 Mac 驱动的墨水屏看板。覆盖 LanguageBreak 越狱、framebuffer 直写显示管线、eips 拉伸黑箱、OTA 拦截与踩坑速查。当用户想把旧 Kindle 用作 e-ink dashboard / 副屏显示、遇到 Kindle 越狱流程问题、eips 显示图片拉伸裁切方向错乱、framebuffer 直写 / cat /dev/fb0、Kindle OTA 自动更新拦截等问题时使用。
+description: 把旧款 Kindle（Paperwhite 3 / 7th gen 等）改造成 Mac 驱动的墨水屏看板 + 阅读器。覆盖 LanguageBreak 越狱、framebuffer 直写显示管线、eips 拉伸黑箱、OTA 拦截、KOReader/微信读书启动链（构建选型、libstdc++、坐标适配）与踩坑速查。当用户想把旧 Kindle 用作 e-ink dashboard / 副屏显示、装 KOReader / 微信读书、遇到 Kindle 越狱流程问题、eips 显示图片拉伸裁切方向错乱、framebuffer 直写 / cat /dev/fb0、Kindle OTA 自动更新拦截等问题时使用。
 ---
 
 # 旧 Kindle 墨水屏看板：完整改造与踩坑指南
@@ -120,6 +120,92 @@ fb 状态——**一切显示实验必须在 framework 死亡、拔线状态下�
 - **FAT 写缓存**：设备侧写的文件（如日志）可能在睡眠前未落盘，Mac 挂载后看不到——
   不是丢失，等设备侧 sync。
 
+## 阶段四：KOReader + 微信读书（PW3 实战全记录）
+
+在 LanguageBreak+KHF 设备上跑通 KOReader 与 weread-kindle（微信读书客户端）的完整方案。
+**社区文档空白点**：KUAL 在 5.14+ 废弃后，新固件老设备的 KOReader 启动入口只能走
+bridge emergency.sh（KOL booklet 与 hotfix 版本接口不匹配，装不上）。
+
+### 构建选型（最大的坑）
+
+- PW3 这类经典框架设备（pillow/awesome）必须用 **`koreader-kindle-*.zip`**（legacy
+  软浮点 target），**绝不能用 `koreader-kindlehf-*`**（那是 PW5/KS 新框架设备专用）。
+- ⚠️ 症状极具迷惑性：装错构建时文件明明存在（ls 都能看到），shell 却报
+  `./luajit: not found`——**ELF exec 失败（ABI 不符）在 shell 里就叫 "not found"**。
+  之前的 `./reader.lua: not found` 同理（reader.lua 的 shebang 是 `#!./luajit`）。
+- 部署布局：本体 `/mnt/us/koreader`，weread-kindle 在 `/mnt/us/weread`，`run.sh` 由
+  `launcher/make-run.sh` 从 `koreader.sh` sed 生成（入口换成 main.lua）。
+- macOS 拷贝后清理 AppleDouble：`find /mnt/us/koreader -name "._*" -delete`。
+
+### 依赖三层检查（装完必做）
+
+```bash
+# 1) 构建平台：ARM 32 位 + 解释器 /lib/ld-linux.so.3
+file koreader/luajit
+# 2) libstdc++ 版本需求 vs 设备固件自带的（PW3 5.16 的偏旧）
+strings -a koreader/common/rapidjson.so | grep -oE "GLIBCXX_3\.4\.[0-9]+" | sort -uV
+# 3) glibc 需求上限（全树扫一遍，≤2.12 则任何 5.x 固件都安全）
+for f in $(find koreader -name "*.so*"); do strings -a "$f" | grep -oE "GLIBC_2\.[0-9]+"; done | sort -uV | tail -1
+```
+
+**libstdc++ 坑**：新版 KOReader 的 `rapidjson.so` 需要 `GLIBCXX_3.4.29`，老固件自带的
+libstdc++ 没有。解法：KOReader kindle 包 `libs/` 里**自带**新版 `libstdc++.so.6`
+（3.4.33），启动前 `export LD_LIBRARY_PATH=/mnt/us/koreader/libs:$LD_LIBRARY_PATH`
+即可。KOReader 前端自身对 rapidjson 失败会静默降级到 dkjson，但 weread-kindle 硬依赖
+rapidjson，没有退路——所以库路径必须修。
+
+### run.sh 入口的保险模式
+
+koreader.sh 官方就把**自己、fbink、tar** 先 `cp` 到 `/var/tmp` 再 exec（vfat+fuse
+规避模式）。本项目把同样的模式扩展到 luajit 入口行，并加了启动探针：
+
+```sh
+export LD_LIBRARY_PATH="/mnt/us/koreader/libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+cp -pf /mnt/us/koreader/luajit /var/tmp/luajit && chmod 777 /var/tmp/luajit
+WEREAD_DIR=/mnt/us/weread /var/tmp/luajit /mnt/us/weread/main.lua "$@" >>crash.log 2>&1
+```
+
+⚠️ **bridge 的 upstart pre-start 是同步执行的**：emergency.sh 里必须把 run.sh
+`nohup ... &` 后台化，否则 App 活着 = bridge job 卡死。
+
+### 启动调试阶梯（四层日志，层层兜底）
+
+| 层 | 文件 | 回答的问题 |
+| --- | --- | --- |
+| 1 | `/mnt/us/boot_trace.log` | emergency.sh 跑了吗？设备视角能看到哪些文件？标志测试结果？ |
+| 2 | `/mnt/us/weread/boot.log` | run.sh 走到哪一步？`sh -x` 逐行轨迹 + 关键文件清单 |
+| 3 | boot.log 探针段 | `./luajit -v` 直接 exec 测试（区分"构建错误"vs"fuse exec 问题"） |
+| 4 | `/mnt/us/weread/crash.log` | luajit 本体的报错（只在该行执行后才有内容） |
+
+crash.log 的重定向挂在 run.sh **最后一行**——入口行之前的任何死亡都不留痕迹，
+必须靠 1-2 层。这是"crash.log 永远为空"谜题的正解。
+
+### 标志与 USB 纪律
+
+- `start_koread` 等标志是**一次性**的（emergency.sh 消费后 rm+sync，防重启死循环）。
+  每次重试都要重新创建；Mac 端写完必须 `sync` 再 `diskutil eject`。
+- ⚠️ **重启前必须拔线**。插线状态下重启，开机早期 USBMS 接管 /mnt/us，设备侧
+  `-f /mnt/us/emergency.sh` 直接失明，bridge 落回默认路径（偶发，时序相关）。
+- 微信读书运行中插 USB 看不到卷 = 设计使然（App SIGSTOP 了 volumd 防打扰），
+  正常退出 App 或重启即恢复。
+- PW3 屏幕的 e-ink 全屏白闪 = 完整刷新（真重启的标志）；看板 fbink 刷新也会闪，
+  别把刷新闪当重启。
+
+### PW3 坐标适配（1264×1680 → 1072×1448）
+
+weread-kindle 界面按官方墨水屏版（1264×1680）逐像素摆放，PW3 上整体右偏 ~96px 且
+部分控件出屏。适配原则：
+
+- **逐文件缩放常量**：`sx(v)=floor(v*SW/1264+0.5)`、`sy(v)=floor(v*SH/1680+0.5)`，
+  绘制与点按热区用同一缩放值（自然一致）。
+- ❌ 不能在 canvas.lua 做全局变换：阅读页划线/笔记的坐标来自 crengine 排版引擎
+  （设备空间），与设计空间的界面坐标混在同一画布，全局缩放会错位。
+- 已适配 9 个文件（登录/底栏/书预览/目录/导入引导/设置/详情/划线评论/阅读页工具栏），
+  见 `render/weread-pw3/` 副本与 `scripts/patch_pw3_layout.py`（每处替换带唯一性断言）。
+- 已知残留：readerview 的弹出面板（进度/字体/更多）内部仍是设计坐标——自洽可用
+  （画和点一致），只是整体略偏，后续按需补。
+- 登录态存 `/mnt/us/weread/session.json`，重启/适配不丢。
+
 ## 踩坑速查表
 
 | 症状 | 原因 | 解法 |
@@ -133,6 +219,15 @@ fb 状态——**一切显示实验必须在 framework 死亡、拔线状态下�
 | Mac 看不到设备侧新写的文件 | FAT 写缓存未落盘 | 非丢失，设备侧 sync 后可见 |
 | 设备刷新几次后永久黑屏 | RTC 闹钟路径不存在睡死 | 用 `/sys/class/rtc/rtc0/wakealarm` |
 | 重启后看板没自启 | emergency.sh 缺失/未执行 | 确认根目录 emergency.sh 可执行 |
+| 二进制存在却报 `./luajit: not found` | ELF exec 失败（装错构建 ABI），shell 误报 not found | 换 koreader-kindle 版（PW3 忌 kindlehf） |
+| crash.log 报 GLIBCXX_3.4.29 not found | 固件 libstdc++ 太老，rapidjson 加载失败 | `LD_LIBRARY_PATH` 指向 koreader/libs（自带新版） |
+| crash.log 永远为空 | run.sh 死在入口行之前，重定向还没挂上 | emergency.sh 用 `sh -x` 记 boot.log |
+| 重启没消费标志/看板照常启动 | 插线状态重启，USBMS 接管 /mnt/us | eject 后**拔线**再长按重启 |
+| 标志第二次重启就失效 | 一次性标志（消费后 rm+sync，防死循环） | 每次重试重新 `touch` + `sync` |
+| 界面整体右偏/控件出屏 | weread 按 1264×1680 官方稿绝对定位 | 按屏比例缩放（`scripts/patch_pw3_layout.py`） |
+| 设备各种写失败/白屏/应用猝死 | framework 崩溃风暴：每个 core ~196MB 塞满 3GB 分区 | 删 `/mnt/us/*.core`；emergency.sh 里 core_pattern → /dev/null |
+| App 运行中插 USB Mac 看不到卷 | App SIGSTOP volumd（防打扰设计） | 正常退出 App 或重启 |
+| KOReader 本体"部署了"却起不来 | 只装了 extensions/koreader（KUAL 壳），本体缺失 | 确认 `/mnt/us/koreader/luajit` 等实体文件在 |
 | 屏幕出现 Collecting Debug Info | framework 进程崩溃 | 已知现象，点 CLOSE 继续 |
 
 ## 仓库文件
@@ -140,7 +235,12 @@ fb 状态——**一切显示实验必须在 framework 死亡、拔线状态下�
 - `scripts/png2raw.py` — PNG → fb raw 转换（8bpp、stride 1088、字节数校验）
 - `scripts/emergency.sh` — 设备端开机脚本模板（部署 + 启动 + 刷新循环 + RTC 睡眠）
 - `scripts/render_dashboard.sh` — Mac 端渲染管线（Chrome 截图 + 转换）
+- `scripts/patch_pw3_layout.py` — weread 界面 PW3 坐标适配补丁（唯一性断言）
+- `scripts/kindle-flag.sh` — 标志设置/清除工具（自动 sync，防 FAT 回滚/丢写）
+- `render/final_emergency.sh` — 当前部署版 emergency.sh（boot_trace + KOReader 分支）
+- `render/weread-pw3/` — weread 界面 PW3 适配版 Lua（部署源）
 - `dashboard/dashboard.html` — 看板页面模板（时钟/日期/天气/待办，e-ink 高对比设计）
+- `downloads/` — 安装包与上游源码（koreader-kindle/kindlehf、weread-kindle、staging）
 
 ## 依赖
 
