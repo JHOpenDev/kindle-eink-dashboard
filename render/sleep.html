@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>sleep</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { width: 1072px; height: 1448px; background: #fff; color: #000;
+         font-family: "PingFang SC", "Hiragino Sans GB", "Heiti SC", sans-serif; }
+  .wrap { display: flex; flex-direction: column; align-items: center;
+          height: 100%; padding: 120px 80px 100px; }
+  .date { font-size: 56px; font-weight: 600; letter-spacing: 2px; }
+  .city { font-size: 44px; color: #333; margin-top: 24px; }
+  .main { margin-top: 180px; display: flex; align-items: flex-start; }
+  .temp { font-size: 360px; font-weight: 700; line-height: 1; }
+  .unit { font-size: 120px; font-weight: 600; margin-top: 30px; }
+  .desc { font-size: 96px; font-weight: 600; margin-top: 40px; }
+  .meta { margin-top: 90px; font-size: 52px; color: #222;
+          display: flex; gap: 56px; }
+  .hint { margin-top: auto; font-size: 40px; color: #555; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="date" id="date">—</div>
+  <div class="city" id="city">—</div>
+  <div class="main">
+    <div class="temp" id="temp">—</div>
+    <div class="unit">°C</div>
+  </div>
+  <div class="desc" id="desc">—</div>
+  <div class="meta">
+    <span id="range">—</span>
+    <span id="humidity">—</span>
+    <span id="wind">—</span>
+  </div>
+  <div class="hint">按电源键继续阅读</div>
+</div>
+<script src="weather_data.js"></script>
+<script>
+  const w = window.WEATHER || {};
+  const weeks = ["日","一","二","三","四","五","六"];
+  const d = new Date();
+  document.getElementById("date").textContent =
+    `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日 星期${weeks[d.getDay()]}`;
+  document.getElementById("city").textContent = w.city || "";
+  document.getElementById("temp").textContent = (w.temp ?? "—");
+  document.getElementById("desc").textContent = w.desc || "";
+  document.getElementById("range").textContent = `${w.tmin ?? "—"}~${w.tmax ?? "—"}°C`;
+  document.getElementById("humidity").textContent = `湿度${w.humidity ?? "—"}%`;
+  document.getElementById("wind").textContent = `风${w.wind ?? "—"}km/h`;
+</script>
+</body>
+</html>

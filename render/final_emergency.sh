@@ -30,6 +30,7 @@ OUT="$1"
 cat "$OUT.raw" > /dev/fb0
 /mnt/us/libkh/bin/fbink -f -s
 mv "$OUT.raw" "$OUT"
+# NOTE: sleep.png 归微信读书 App 所有（App 内定时拉天气重绘），看板不要碰它
 FETCHEOF
 chmod +x /mnt/us/dashboard/local/fetch-dashboard.sh
 

@@ -50,6 +50,12 @@ Mac 在卷根 `touch start_koread` + sync + eject + **拔线** + 长按重启 �
 
 ## 待办（按优先级）
 
+0. [ ] **未定位：看板启动报错**（2026-11-17，用户报重启后天气页有报错弹窗；Kindle 已被
+       带走，下次插线先读 boot_trace + dash.log 取现场）
+0. [ ] **微信读书断网后不能自动重连 Wi-Fi**：需在 App 内接入 KOReader NetworkMgr
+       （设备层有 enableWifi/isWifiOnline；方案已调研未实现——休眠唤醒后 Wi-Fi 掉线
+       需主动 enableWifi + 等关联）
+
 1. [ ] **LaunchAgent**：Mac 重启后自动拉起 `render_dashboard.sh --loop` + `http.server
        8899`（看板模式目前依赖手动）
 2. [ ] 正式刷新节奏：`dashboard/local/env.sh` 的 `REFRESH_SCHEDULE`（现 `*/5` 测试值，

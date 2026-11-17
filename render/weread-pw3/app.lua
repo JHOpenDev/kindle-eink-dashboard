@@ -112,11 +112,23 @@ local function setupKeyboard()
     end
 end
 
+-- 天气息屏：启动拉一次（子进程，自带网络等待重试），之后每 30 分钟刷新 sleep.png。
+-- 设备长期待在微信读书里，息屏天气也保持实时（见 sleepweather.lua）。
+function App.startSleepWeather()
+    local SleepWeather = require("weread/sleepweather")
+    SleepWeather.refreshAsync(function()
+        UIManager:scheduleIn(SleepWeather.REFRESH_SECONDS, function()
+            App.startSleepWeather()
+        end)
+    end)
+end
+
 function App:start()
     setupNetworkWait()
     setupKeyboard()
     keepAwakeForDev()
     App.hookScreensaver()
+    App.startSleepWeather()
     installPerfLog()
     if os.getenv("WEREAD_DEV_INPUT") ~= "0" then startDevInput() end
     if Direct.isLoggedIn() then

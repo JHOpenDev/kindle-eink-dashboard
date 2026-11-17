@@ -14,6 +14,7 @@ CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 mkdir -p "$RENDER_DIR"
 
 render_once() {
+  python3 -I "$(dirname "$0")/fetch_weather.py"   # 失败时保留旧数据，不阻塞
   "$CHROME" --headless --disable-gpu --force-device-scale-factor=1 \
     --window-size=1072,1448 --screenshot="$RENDER_DIR/dash.png" \
     --hide-scrollbars --virtual-time-budget=2000 \
@@ -21,6 +22,12 @@ render_once() {
   [ -s "$RENDER_DIR/dash.png" ] || { echo "FAIL: screenshot"; return 1; }
   python3 -I "$(dirname "$0")/png2raw.py" "$RENDER_DIR/dash.png" "$RENDER_DIR/dash.raw" \
     && echo "OK: $(date +%T) dash.raw updated"
+  # 天气版息屏图（微信读书屏保）：设备看板循环会拉取到 /mnt/us/weread/sleep.png
+  "$CHROME" --headless --disable-gpu --force-device-scale-factor=1 \
+    --window-size=1072,1448 --screenshot="$RENDER_DIR/sleep.png" \
+    --hide-scrollbars --virtual-time-budget=2000 \
+    "file://$RENDER_DIR/sleep.html" 2>/dev/null
+  [ -s "$RENDER_DIR/sleep.png" ] && echo "OK: $(date +%T) sleep.png updated"
 }
 
 if [ "$1" = "--loop" ]; then
