@@ -1,5 +1,6 @@
 #!/bin/sh
-# Deploy raw-frame pipeline: fetch dash.raw -> write /dev/fb0 -> fbink refresh
+# Kindle PW3 开机入口：默认微信读书，weread_stop 存在时进入看板。
+# 看板管线：fetch dash.raw -> write /dev/fb0 -> fbink refresh
 
 # === BOOT TRACE (unconditional) ===
 # Ground truth: what the DEVICE sees in /mnt/us at bridge-time. Answers "did
@@ -7,9 +8,10 @@
 {
     echo "=== emergency.sh entered $(date) ==="
     echo "--- device view of /mnt/us root (flags & anchors) ---"
-    ls -la /mnt/us 2>&1 | grep -E "start_koread|nosleep|dashboard_stop|start_weread|emergency|koreader|weread" || echo "(no matching entries visible)"
+    ls -la /mnt/us 2>&1 | grep -E "start_koread|weread_stop|nosleep|dashboard_stop|start_weread|emergency|koreader|weread" || echo "(no matching entries visible)"
     echo "--- flag tests ---"
     echo "-f start_koread: $( [ -f /mnt/us/start_koread ] && echo YES || echo no )"
+    echo "-f weread_stop: $( [ -f /mnt/us/weread_stop ] && echo YES || echo no )"
     echo "-f dashboard_stop: $( [ -f /mnt/us/dashboard_stop ] && echo YES || echo no )"
     echo "-f nosleep: $( [ -f /mnt/us/nosleep ] && echo YES || echo no )"
 } >>/mnt/us/boot_trace.log 2>&1
@@ -18,6 +20,16 @@
 # （2026-11-16 事故：磁盘 100% → 全系统写失败）。内核级重定向 + shell 级双保险。
 echo "/dev/null" > /proc/sys/kernel/core_pattern 2>/dev/null
 ulimit -c 0 2>/dev/null
+# 同时清理历史转储；只匹配崩溃产物扩展名，不动 documents 里的书籍。
+rm -f /mnt/us/*.core 2>/dev/null
+if [ -d /mnt/us/documents ]; then
+    find /mnt/us/documents -maxdepth 1 \
+        \( -name '*.core' -o -name '*.crash' -o -name 'crash-*.log' -o -name 'crash-*.txt' \) \
+        -exec rm -rf '{}' \; 2>/dev/null
+fi
+
+# 主动打开无线。App 内的 weread/wifi.lua 还会在断线时负责重连。
+lipc-set-prop com.lab126.cmd wirelessEnable 1 >/dev/null 2>&1
 
 # 开机关背光（前光纯软件控制；看板模式下系统 UI 已死，只能开机时设）
 lipc-set-prop com.lab126.powerd flIntensity 0
@@ -105,32 +117,72 @@ DASHEOF
 chmod +x /mnt/us/dashboard/dash.sh
 rm -f /mnt/us/dashboard/logs/dash.log
 
-# Launch KOReader (start_koread flag; one-shot, full trace -> /mnt/us/weread/boot.log)
-# NOTE: run.sh's own crash.log redirect lives on its LAST line, so anything that
-# dies before the entry line leaves no trace unless we capture the launcher's
-# stderr here. sh -x traces every executed line into boot.log.
-# NOTE: bridge.conf runs us in the upstart pre-start block -> run.sh MUST be
-# backgrounded or we block the boot job chain while KOReader is alive.
+# 微信读书是默认主页；weread_stop 存在时才退回看板。
+# start_koread 保留为兼容/强制进入入口，并会清除 weread_stop。
+# 3 分钟窗口内最多拉起 4 次，避免启动异常形成反复重启。
+WEREAD_GUARD_FILE=/var/local/weread-launch.guard
+weread_launch_allowed() {
+    local now window_start count elapsed
+    now=$(date +%s)
+    window_start=$now
+    count=0
+    if [ -f "$WEREAD_GUARD_FILE" ]; then
+        set -- $(cat "$WEREAD_GUARD_FILE" 2>/dev/null)
+        case "${1:-}" in
+            ''|*[!0-9]*) window_start=$now ;;
+            *) window_start=$1 ;;
+        esac
+        case "${2:-0}" in
+            ''|*[!0-9]*) count=0 ;;
+            *) count=$2 ;;
+        esac
+    fi
+    elapsed=$((now - window_start))
+    if [ "$elapsed" -lt 0 ] || [ "$elapsed" -ge 180 ]; then
+        window_start=$now
+        count=0
+    fi
+    if [ "$count" -ge 4 ]; then
+        echo "$(date) weread launch guard: 4 launches within 180s, fallback to dashboard" >>/mnt/us/weread/boot.log 2>&1
+        return 1
+    fi
+    count=$((count + 1))
+    printf '%s %s\n' "$window_start" "$count" >"$WEREAD_GUARD_FILE.tmp" \
+        && mv "$WEREAD_GUARD_FILE.tmp" "$WEREAD_GUARD_FILE"
+    return 0
+}
+
 if [ -f /mnt/us/start_koread ]; then
-    rm -f /mnt/us/start_koread
+    rm -f /mnt/us/start_koread /mnt/us/weread_stop
     sync
-    {
-        echo "=== $(date) start_koread consumed (bridge CWD=$(pwd)) ==="
-        echo "--- key files ---"
-        ls -ld /mnt/us/koreader /mnt/us/weread 2>&1
-        ls -la /mnt/us/weread/run.sh /mnt/us/weread/main.lua /mnt/us/koreader/luajit /mnt/us/koreader/reader.lua 2>&1
-        echo "--- KOREADER_DIR env pollution check ---"
-        env | grep -i koreader
-        echo "--- run.sh first 40 lines ---"
-        head -40 /mnt/us/weread/run.sh 2>&1
-        echo "--- launching run.sh (sh -x, backgrounded) ---"
-    } >>/mnt/us/weread/boot.log 2>&1
-    nohup /bin/sh -x /mnt/us/weread/run.sh >>/mnt/us/weread/boot.log 2>&1 &
-    echo "=== $(date) run.sh backgrounded (pid $!) ===" >>/mnt/us/weread/boot.log 2>&1
-    exit 0
 fi
+
+if [ ! -f /mnt/us/weread_stop ] && [ -f /mnt/us/weread/run.sh ]; then
+    # bridge.conf 在 upstart pre-start 同步执行本脚本；run.sh 必须后台化。
+    # 若 emergency.sh 被重复触发，不重复启动已存活的 App。
+    if ps | grep -v grep | grep -q "weread/main.lua"; then
+        exit 0
+    fi
+    if weread_launch_allowed; then
+        {
+            echo "=== $(date) launching WeRead (bridge CWD=$(pwd)) ==="
+            echo "--- key files ---"
+            ls -ld /mnt/us/koreader /mnt/us/weread 2>&1
+            ls -la /mnt/us/weread/run.sh /mnt/us/weread/main.lua /mnt/us/koreader/luajit /mnt/us/koreader/reader.lua 2>&1
+            echo "--- KOREADER_DIR env pollution check ---"
+            env | grep -i koreader
+            echo "--- run.sh first 40 lines ---"
+            head -40 /mnt/us/weread/run.sh 2>&1
+            echo "--- launching run.sh (sh -x, backgrounded) ---"
+        } >>/mnt/us/weread/boot.log 2>&1
+        nohup /bin/sh -x /mnt/us/weread/run.sh >>/mnt/us/weread/boot.log 2>&1 &
+        echo "=== $(date) run.sh backgrounded (pid $!) ===" >>/mnt/us/weread/boot.log 2>&1
+        exit 0
+    fi
+fi
+
 if [ -f /mnt/us/dashboard_stop ]; then
-    echo "dashboard_stop present, skip autostart" >>/mnt/us/boot_trace.log 2>&1
+    echo "dashboard_stop present, skip all autostart" >>/mnt/us/boot_trace.log 2>&1
     exit 0
 fi
 if ps | grep -v grep | grep -q "dashboard/dash.sh"; then

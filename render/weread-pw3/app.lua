@@ -112,12 +112,12 @@ local function setupKeyboard()
     end
 end
 
--- 天气息屏：启动拉一次（子进程，自带网络等待重试），之后每 30 分钟刷新 sleep.png。
--- 设备长期待在微信读书里，息屏天气也保持实时（见 sleepweather.lua）。
+-- 天气息屏：启动拉一次（子进程，自带网络等待重试），成功每 30 分钟刷新，
+-- 断网/失败时 60 秒后重试，网络恢复后不必再等半小时。
 function App.startSleepWeather()
     local SleepWeather = require("weread/sleepweather")
-    SleepWeather.refreshAsync(function()
-        UIManager:scheduleIn(SleepWeather.REFRESH_SECONDS, function()
+    SleepWeather.refreshAsync(function(ok)
+        UIManager:scheduleIn(ok and SleepWeather.REFRESH_SECONDS or SleepWeather.RETRY_SECONDS, function()
             App.startSleepWeather()
         end)
     end)

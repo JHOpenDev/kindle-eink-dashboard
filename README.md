@@ -1,8 +1,8 @@
 # kindle-eink-dashboard
 
-把旧款 Kindle（Paperwhite 3 / 7th gen 实测）改造成 **Mac 驱动的墨水屏看板**：
-Mac 渲染页面 → 局域网推送 → Kindle 直写 framebuffer 显示。开机自动进入看板模式，
-每 5 分钟自动刷新，其余时间深度睡眠省电。
+把旧款 Kindle（Paperwhite 3 / 7th gen 实测）改造成 **微信读书阅读器 + Mac 驱动的
+墨水屏看板**：默认开机进入微信读书；创建 `weread_stop` 标志后重启进入看板，Mac 渲染
+页面 → 局域网推送 → Kindle 直写 framebuffer 显示，每 5 分钟自动刷新，其余时间睡眠省电。
 
 > 本仓库同时是一个 [ZCode/Claude Skill](SKILL.md)——把整个改造过程中踩过的坑
 > （LanguageBreak 越狱、eips 拉伸黑箱、framework 干扰、RTC 唤醒路径、OTA 拦截等）
@@ -11,7 +11,8 @@ Mac 渲染页面 → 局域网推送 → Kindle 直写 framebuffer 显示。开�
 ## 效果
 
 - 1072×1448 满屏、方向正确、灰度无变形
-- 内容 = Mac 上的一个 HTML 页面（时钟/日期/天气/待办），改完 5 分钟自动上屏
+- 微信读书默认启动，断网主动重连 Wi-Fi，息屏显示实时天气
+- 看板内容 = Mac 上的一个 HTML 页面（时钟/日期/天气/待办），改完 5 分钟自动上屏
 - 显示层完全绕开 `eips`（其缩放行为是本项目最大的坑，详见 SKILL.md）
 
 ## 快速开始
@@ -38,7 +39,16 @@ scripts/render_dashboard.sh --loop
 ### 2. Kindle 端
 
 把 `scripts/emergency.sh` 拷到设备 USB 分区根目录（越狱 bridge 会在每次开机时
-自动执行它，完成脚本部署 + 启动刷新循环），重启设备即可。
+自动执行它）。已部署 `/mnt/us/weread/run.sh` 时默认进入微信读书，否则回退到看板。
+`render/final_emergency.sh` 是同一部署源的兼容副本。
+
+### 双模式切换
+
+- **默认**：开机进入微信读书；3 分钟内最多连续拉起 4 次，防止异常重启循环。
+- **回看板**：`scripts/kindle-flag.sh set weread_stop`，推出、拔线并重启。
+- **回微信读书**：`scripts/kindle-flag.sh clear weread_stop`，推出、拔线并重启。
+- `start_koread` 仍可作为一次性强制进入入口，并会清除 `weread_stop`。
+- `dashboard_stop` 是全停急停开关：存在时不自动启动任何一个界面。
 
 ### 3. 自定义内容
 
@@ -63,8 +73,9 @@ framebuffer，导致"方向正、垂直完整、水平放大裁切"的诡异画�
 | --- | --- |
 | [SKILL.md](SKILL.md) | 完整操作指南 + 踩坑速查表（AI skill / 人读皆可） |
 | scripts/png2raw.py | PNG → fb raw 转换器 |
-| scripts/emergency.sh | 设备端开机脚本（bridge 自动执行） |
+| scripts/emergency.sh | 设备端开机脚本：默认微信读书、看板回退、启动保护、崩溃清理 |
 | scripts/render_dashboard.sh | Mac 渲染管线 |
+| render/weread-pw3/ | 微信读书 PW3 适配源码、Wi-Fi 重连、天气息屏 |
 | dashboard/dashboard.html | 看板页面模板 |
 
 ## License

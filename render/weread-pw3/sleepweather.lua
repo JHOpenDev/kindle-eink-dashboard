@@ -10,6 +10,7 @@ local Screen = Device.screen
 
 local Config = require("weread/config")
 local Theme = require("weread/theme")
+local Wifi = require("weread/wifi")
 
 local W, H = Screen:getWidth(), Screen:getHeight()
 local URL = ("https://api.open-meteo.com/v1/forecast"
@@ -17,7 +18,7 @@ local URL = ("https://api.open-meteo.com/v1/forecast"
     .. "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m"
     .. "&daily=temperature_2m_max,temperature_2m_min&timezone=Asia%2FShanghai&forecast_days=1")
 
-local M = { REFRESH_SECONDS = 1800 }
+local M = { REFRESH_SECONDS = 1800, RETRY_SECONDS = 60 }
 
 local WMO = {
     [0] = "晴", [1] = "基本晴", [2] = "多云转晴", [3] = "阴",
@@ -88,6 +89,11 @@ end
 
 -- 子进程里跑：拉数据 → 渲染 → 原子落盘。成功返回路径，失败返回 nil（保留旧图）。
 function M.refresh()
+    -- 天气渲染本来就在子进程中，先等无线恢复不会卡住阅读界面。
+    if not Wifi.waitForConnection(Wifi.WAIT_SECONDS) then
+        logger.warn("weread sleepweather: wifi unavailable")
+        return nil
+    end
     local data
     for _ = 1, 3 do
         data = httpGet(URL, 15)

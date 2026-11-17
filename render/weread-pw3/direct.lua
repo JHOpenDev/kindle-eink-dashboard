@@ -26,6 +26,7 @@ int archive_read_add_passphrase(struct archive *, const char *);
 ]]
 
 local Config = require("weread/config")
+local Wifi = require("weread/wifi")
 
 local HOST = "https://i.weread.qq.com"
 local WX_APP_ID = "wxab9b71ad2b90ff34"
@@ -45,7 +46,7 @@ local HEADERS = {
 -- ErrorCode.java：-2012 会话超时，-2010 没有 vid，-2013 鉴权失败
 local SESSION_ERRORS = { [-2010] = true, [-2012] = true, [-2013] = true }
 
-local NETWORK_WAIT_SECONDS = 30
+local NETWORK_WAIT_SECONDS = 45
 local NETWORK_RETRY_INTERVAL = 1.5
 
 local Direct = {
@@ -144,18 +145,26 @@ local function requestOnce(method, url, body, use_auth, timeout, no_redirect)
     return table.concat(chunks), code, resp_headers or {}
 end
 
--- Kindle 从休眠醒来后 Wi-Fi 要几秒才重新连上，这期间每隔一会儿重试，最多等 NETWORK_WAIT_SECONDS
+-- Kindle 从休眠醒来后 Wi-Fi 可能仍停在关闭/未关联状态。先主动重连，
+-- 再在等待窗口内重试 HTTP；只重发请求无法恢复 wirelessEnable。
 local function request(method, url, body, use_auth, timeout)
     local resp, code, headers = requestOnce(method, url, body, use_auth, timeout)
     if resp or headers ~= true then return resp, code, headers end
     if Direct.on_network_wait then Direct.on_network_wait(true) end
-    local waited = 0
-    while waited < NETWORK_WAIT_SECONDS do
+
+    local socket = require("socket")
+    local deadline = socket.gettime() + NETWORK_WAIT_SECONDS
+    Wifi.ensureConnected()
+    repeat
         util.usleep(math.floor(NETWORK_RETRY_INTERVAL * 1000000))
-        waited = waited + NETWORK_RETRY_INTERVAL
-        resp, code, headers = requestOnce(method, url, body, use_auth, timeout)
-        if resp or headers ~= true then break end
-    end
+        if Wifi.isConnected() then
+            resp, code, headers = requestOnce(method, url, body, use_auth, timeout)
+            if resp or headers ~= true then break end
+        else
+            Wifi.ensureConnected()
+        end
+    until socket.gettime() >= deadline
+
     if Direct.on_network_wait then Direct.on_network_wait(false) end
     if not resp then return nil, "网络连接失败，请确认 Kindle 已联网" end
     return resp, code, headers

@@ -180,10 +180,16 @@ WEREAD_DIR=/mnt/us/weread /var/tmp/luajit /mnt/us/weread/main.lua "$@" >>crash.l
 crash.log 的重定向挂在 run.sh **最后一行**——入口行之前的任何死亡都不留痕迹，
 必须靠 1-2 层。这是"crash.log 永远为空"谜题的正解。
 
-### 标志与 USB 纪律
+### 模式标志、Wi-Fi 与 USB 纪律
 
-- `start_koread` 等标志是**一次性**的（emergency.sh 消费后 rm+sync，防重启死循环）。
-  每次重试都要重新创建；Mac 端写完必须 `sync` 再 `diskutil eject`。
+- **默认开机进微信读书**；`weread_stop` 存在时才进看板，删除后恢复。`start_koread`
+  保留为一次性兼容/强制进入入口，消费时同时清除 `weread_stop`。
+- 启动保护：3 分钟窗口内最多拉起 4 次，状态存 `/var/local/weread-launch.guard`，
+  防止启动异常形成反复重启。
+- 开机主动 `wirelessEnable 1`。App 内 `weread/wifi.lua` 在请求失败后检查
+  `com.lab126.wifid cmState`，未连接时打开无线，已打开但未关联则先关再开；
+  跨请求 12 秒防抖，最多等待 45 秒。息屏天气先等 Wi-Fi，失败 60 秒重试。
+- Mac 端写标志或脚本后必须 `sync` 再 `diskutil eject`。
 - ⚠️ **重启前必须拔线**。插线状态下重启，开机早期 USBMS 接管 /mnt/us，设备侧
   `-f /mnt/us/emergency.sh` 直接失明，bridge 落回默认路径（偶发，时序相关）。
 - 微信读书运行中插 USB 看不到卷 = 设计使然（App SIGSTOP 了 volumd 防打扰），
@@ -223,7 +229,8 @@ weread-kindle 界面按官方墨水屏版（1264×1680）逐像素摆放，PW3 �
 | crash.log 报 GLIBCXX_3.4.29 not found | 固件 libstdc++ 太老，rapidjson 加载失败 | `LD_LIBRARY_PATH` 指向 koreader/libs（自带新版） |
 | crash.log 永远为空 | run.sh 死在入口行之前，重定向还没挂上 | emergency.sh 用 `sh -x` 记 boot.log |
 | 重启没消费标志/看板照常启动 | 插线状态重启，USBMS 接管 /mnt/us | eject 后**拔线**再长按重启 |
-| 标志第二次重启就失效 | 一次性标志（消费后 rm+sync，防死循环） | 每次重试重新 `touch` + `sync` |
+| 重启后总是进入看板 | 新版脚本检测到 weread_stop | 删除 weread_stop，sync/eject 后拔线重启 |
+| 微信读书断网后一直请求失败 | awesome 停止后无线未自动重连 | weread/wifi.lua 主动 wirelessEnable，45 秒窗口重试 |
 | 界面整体右偏/控件出屏 | weread 按 1264×1680 官方稿绝对定位 | 按屏比例缩放（`scripts/patch_pw3_layout.py`） |
 | 设备各种写失败/白屏/应用猝死 | framework 崩溃风暴：每个 core ~196MB 塞满 3GB 分区 | 删 `/mnt/us/*.core`；emergency.sh 里 core_pattern → /dev/null |
 | App 运行中插 USB Mac 看不到卷 | App SIGSTOP volumd（防打扰设计） | 正常退出 App 或重启 |
@@ -233,12 +240,12 @@ weread-kindle 界面按官方墨水屏版（1264×1680）逐像素摆放，PW3 �
 ## 仓库文件
 
 - `scripts/png2raw.py` — PNG → fb raw 转换（8bpp、stride 1088、字节数校验）
-- `scripts/emergency.sh` — 设备端开机脚本模板（部署 + 启动 + 刷新循环 + RTC 睡眠）
+- `scripts/emergency.sh` — 设备端开机脚本（默认微信读书、看板回退、启动保护）
 - `scripts/render_dashboard.sh` — Mac 端渲染管线（Chrome 截图 + 转换）
 - `scripts/patch_pw3_layout.py` — weread 界面 PW3 坐标适配补丁（唯一性断言）
 - `scripts/kindle-flag.sh` — 标志设置/清除工具（自动 sync，防 FAT 回滚/丢写）
-- `render/final_emergency.sh` — 当前部署版 emergency.sh（boot_trace + KOReader 分支）
-- `render/weread-pw3/` — weread 界面 PW3 适配版 Lua（部署源）
+- `render/final_emergency.sh` — 与 scripts/emergency.sh 同步的兼容部署副本
+- `render/weread-pw3/` — weread PW3 界面、Wi-Fi 重连与天气息屏 Lua 部署源
 - `dashboard/dashboard.html` — 看板页面模板（时钟/日期/天气/待办，e-ink 高对比设计）
 - `downloads/` — 安装包与上游源码（koreader-kindle/kindlehf、weread-kindle、staging）
 
